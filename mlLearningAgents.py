@@ -1,26 +1,27 @@
-# # mlLearningAgents.py
-# # parsons/27-mar-2017
-# #
-# # A stub for a reinforcement learning agent to work with the Pacman
-# # piece of the Berkeley AI project:
-# #
-# # http://ai.berkeley.edu/reinforcement.html
-# #
-# # As required by the licensing agreement for the PacMan AI we have:
-# #
-# # Licensing Information:  You are free to use or extend these projects for
-# # educational purposes provided that (1) you do not distribute or publish
-# # solutions, (2) you retain this notice, and (3) you provide clear
-# # attribution to UC Berkeley, including a link to http://ai.berkeley.edu.
-# # 
-# # Attribution Information: The Pacman AI projects were developed at UC Berkeley.
-# # The core projects and autograders were primarily created by John DeNero
-# # (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
-# # Student side autograding was added by Brad Miller, Nick Hay, and
-# # Pieter Abbeel (pabbeel@cs.berkeley.edu).
 
-# # This template was originally adapted to KCL by Simon Parsons, but then
-# # revised and updated to Py3 for the 2022 course by Dylan Cope and Lin Li
+# mlLearningAgents.py
+# parsons/27-mar-2017
+#
+# A stub for a reinforcement learning agent to work with the Pacman
+# piece of the Berkeley AI project:
+#
+# http://ai.berkeley.edu/reinforcement.html
+#
+# As required by the licensing agreement for the PacMan AI we have:
+#
+# Licensing Information:  You are free to use or extend these projects for
+# educational purposes provided that (1) you do not distribute or publish
+# solutions, (2) you retain this notice, and (3) you provide clear
+# attribution to UC Berkeley, including a link to http://ai.berkeley.edu.
+# 
+# Attribution Information: The Pacman AI projects were developed at UC Berkeley.
+# The core projects and autograders were primarily created by John DeNero
+# (denero@cs.berkeley.edu) and Dan Klein (klein@cs.berkeley.edu).
+# Student side autograding was added by Brad Miller, Nick Hay, and
+# Pieter Abbeel (pabbeel@cs.berkeley.edu).
+
+# This template was originally adapted to KCL by Simon Parsons, but then
+# revised and updated to Py3 for the 2022 course by Dylan Cope and Lin Li
 
 from __future__ import absolute_import
 from __future__ import print_function
@@ -35,28 +36,52 @@ class GameStateFeatures:
 
         self.pacman_pos = state.getPacmanPosition()
         
-        # I discovered that the food grid was a bit inefficient for lookups, so
-        # I converted it to a tuple of positions for faster access and better hashing
+        # The food grid was a bit inefficient for lookups, so
+        # we converted it to a tuple of positions for faster access
         food_grid = state.getFood()
-        self.food_positions = tuple(sorted((x, y) for x in range(food_grid.width) 
-                                  for y in range(food_grid.height) if food_grid[x][y]))
+        food_list = []
+        for x in range(food_grid.width):
+            for y in range(food_grid.height):
+                if food_grid[x][y]:
+                    food_list.append((x, y))
+        food_list.sort()
+        self.food_positions = tuple(food_list)
         self.food_count = len(self.food_positions)
         
         # Had to convert ghost positions to integers and sort them to ensure
         # consistent hashing - otherwise similar states looked different to the agent
-        self.ghost_positions = tuple(sorted((int(x), int(y)) for x, y in state.getGhostPositions()))
+        ghost_list = []
+        for ghost_pos in state.getGhostPositions():
+            x, y = ghost_pos
+            ghost_list.append((int(x), int(y)))
+        ghost_list.sort()
+        self.ghost_positions = tuple(ghost_list)
         
-        # One big optimization was precalculating these distances - I noticed
-        # the agent kept computing the same distances repeatedly
+        # The nearest food distance is needed in multiple functions, so we
+        # lifted the value to be part of the game state and cache it so it
+        # only needs to be calculated once 
         self.nearest_food_distance = float('inf')
         if self.food_positions:
-            self.nearest_food_distance = min(manhattanDistance(self.pacman_pos, food_pos) 
-                                          for food_pos in self.food_positions)
-        
+            min_food_dist = float('inf')
+            for food_pos in self.food_positions:
+                dist = manhattanDistance(self.pacman_pos, food_pos)
+                if dist < min_food_dist:
+                    min_food_dist = dist
+            self.nearest_food_distance = min_food_dist
+
+        # The same philosophy behind caching the nearest food distance,
+        # except this time we cache the distance of the nearest ghost
         self.nearest_ghost_distance = float('inf')
         if self.ghost_positions:
-            self.nearest_ghost_distance = min(manhattanDistance(self.pacman_pos, ghost_pos) 
-                                           for ghost_pos in self.ghost_positions)
+            min_ghost_dist = float('inf')
+            for ghost_pos in self.ghost_positions:
+                dist = manhattanDistance(self.pacman_pos, ghost_pos)
+                if dist < min_ghost_dist:
+                    min_ghost_dist = dist
+            self.nearest_ghost_distance = min_ghost_dist
+        
+        # Store the original state for legal action access
+        self.state = state
         
     def __eq__(self, other):
         """
@@ -81,6 +106,16 @@ class GameStateFeatures:
             
         """
         return self.nearest_ghost_distance <= threshold
+    
+    def getLegalActions(self):
+        """Get legal actions for this state"""
+        if not hasattr(self, 'state') or self.state is None:
+            return []
+            
+        actions = self.state.getLegalPacmanActions()
+        if Directions.STOP in actions:
+            actions.remove(Directions.STOP)
+        return actions
 
 class QLearnAgent(Agent):
     def __init__(self, alpha: float = 0.5, epsilon: float = 0.05, gamma: float = 0.8, 
@@ -89,7 +124,7 @@ class QLearnAgent(Agent):
         Initialize the Q-learning agent with learning parameters.
         
         We tried many different values for the greek (alpha, epsilon, gamma)
-        these values worked the best for our model:
+        these values worked the best for our model. Just as a reminder:
         - alpha: Controls how much we learn from new experiences (0.5 was a good balance)
         - epsilon: Controls exploration vs. exploitation (starting at 0.05)
         - gamma: Values future rewards (0.8 gives good foresight without overvaluing)
@@ -179,7 +214,14 @@ class QLearnAgent(Agent):
                 
         So we reward pacman for approaching and eating the food, and exponentially "punish" it
         for getting near ghosts.
-               
+
+
+        Args:
+            startState: A starting state
+            endState: A resulting state
+
+        Returns:
+            The reward assigned for the given trajectory
         """
         if endState.isWin():
             return 1000
@@ -206,15 +248,25 @@ class QLearnAgent(Agent):
             end_pacman = endState.getPacmanPosition()
             
             food_grid = endState.getFood()
-            food_positions = [(x, y) for x in range(food_grid.width) 
-                             for y in range(food_grid.height) if food_grid[x][y]]
+            food_positions = []
+            for x in range(food_grid.width):
+                for y in range(food_grid.height):
+                    if food_grid[x][y]:
+                        food_positions.append((x, y))
             
             if food_positions:
                 # Get distance to nearest food before and after the move
-                start_nearest_food_dist = min(manhattanDistance(start_pacman, food_pos) 
-                                           for food_pos in food_positions)
-                end_nearest_food_dist = min(manhattanDistance(end_pacman, food_pos) 
-                                         for food_pos in food_positions)
+                start_nearest_food_dist = float('inf')
+                for food_pos in food_positions:
+                    dist = manhattanDistance(start_pacman, food_pos)
+                    if dist < start_nearest_food_dist:
+                        start_nearest_food_dist = dist
+                
+                end_nearest_food_dist = float('inf')
+                for food_pos in food_positions:
+                    dist = manhattanDistance(end_pacman, food_pos)
+                    if dist < end_nearest_food_dist:
+                        end_nearest_food_dist = dist
                 
                 # Reward for getting closer to food
                 if end_nearest_food_dist < start_nearest_food_dist:
@@ -226,8 +278,11 @@ class QLearnAgent(Agent):
         # Exponential ghost proximity punishment 
         ghost_positions = endState.getGhostPositions()
         pacman_pos = endState.getPacmanPosition()
-        min_ghost_dist = min(manhattanDistance(pacman_pos, ghost_pos) 
-                            for ghost_pos in ghost_positions)
+        min_ghost_dist = float('inf')
+        for ghost_pos in ghost_positions:
+            dist = manhattanDistance(pacman_pos, ghost_pos)
+            if dist < min_ghost_dist:
+                min_ghost_dist = dist
         
         if min_ghost_dist <= 1:  
             reward -= 500
@@ -237,19 +292,48 @@ class QLearnAgent(Agent):
         return reward
         
     def getQValue(self, state: GameStateFeatures, action: Directions) -> float:
-        """Get the learned Q-value for a state-action pair"""
+        """
+        Get the learned Q-value for a state-action pair
+
+        Args:
+            state: A given state
+            action: Proposed action to take
+
+        Returns:
+            Q(state, action)
+
+        """
         return self.q_values.get((state, action), 0.0)
 
-    def maxQValue(self, state: GameStateFeatures, legal_actions: list) -> float:
-        """Find the maximum Q-value for a state across all legal actions"""
+    def maxQValue(self, state: GameStateFeatures) -> float:
+        """
+        Find the maximum Q-value for a state across all legal actions
+
+        Args:
+            state: The given state
+ 
+        Returns:
+            q_value: the maximum estimated Q-value attainable from the state
+        """
+        legal_actions = state.getLegalActions() if hasattr(state, 'getLegalActions') else []
+        
         if not legal_actions:
             return 0.0
-        return max(self.getQValue(state, action) for action in legal_actions)
+            
+        max_q_value = float('-inf')
+        for action in legal_actions:
+            q_value = self.getQValue(state, action)
+            if q_value > max_q_value:
+                max_q_value = q_value
+                
+        return max_q_value if max_q_value != float('-inf') else 0.0
 
-    def getBestAction(self, state: GameStateFeatures, legal_actions: list) -> Directions:
+    def getBestAction(self, state: GameStateFeatures) -> Directions:
         """
         Find the action with the highest Q-value.
         """
+        legal_actions = state.getLegalActions() if hasattr(state, 'getLegalActions') else []
+        
         if not legal_actions:
             return None
             
@@ -266,17 +350,22 @@ class QLearnAgent(Agent):
                 
         return random.choice(best_actions)
 
-    def learn(self, state: GameStateFeatures, action: Directions, reward: float, 
-              nextState: GameStateFeatures, next_legal_actions: list):
+    def learn(self, state: GameStateFeatures, action: Directions, reward: float, nextState: GameStateFeatures):
         """
         Update Q-values based on the Q-learning formula.
                 
         We boosted the learning rate when encountering dangerous situations,
         so the agent learns more quickly from negative experiences.
+        
+        Args:
+            state: the initial state
+            action: the action that was took
+            nextState: the resulting state
+            reward: the reward received on this trajectory
         """
         # Standard Q-learning update
         current_q = self.getQValue(state, action)
-        max_next_q = self.maxQValue(nextState, next_legal_actions)
+        max_next_q = self.maxQValue(nextState)
         td_target = reward + self.gamma * max_next_q
         td_error = td_target - current_q
         new_q = current_q + self.alpha * td_error
@@ -288,59 +377,59 @@ class QLearnAgent(Agent):
             self.q_values[(state, action)] = current_q + boosted_alpha * td_error
 
     def updateCount(self, state: GameStateFeatures, action: Directions):
-        """Track how many times we've taken each action in each state"""
+        """
+        Updates the stored visitation counts.
+
+        Args:
+            state: Starting state
+            action: Action taken
+        """
         self.counts[(state, action)] = self.getCount(state, action) + 1
 
     def getCount(self, state: GameStateFeatures, action: Directions) -> int:
-        """Get the count of how many times we've taken an action in a state"""
+        """
+        Get the count of how many times we've taken an action in a state
+
+        Args:
+            state: Starting state
+            action: Action taken
+
+        Returns:
+            Number of times that the action has been taken in a given state
+
+        """
         return self.counts.get((state, action), 0)
 
-    def explorationFn(self, utility: float, counts: int, state: GameStateFeatures, action: Directions) -> float:
+    def explorationFn(self, utility: float, counts: int) -> float:
         """
-        For the exploration function, we factored domain knowledge into our calculation.
+        Computes exploration function.
+        Return a value based on the counts
+                
+        Args:
+            utility: expected utility for taking some action a in some given state s
+            counts: counts for having taken visited
 
-        We consider pacman's proximity to the ghosts, and how much food is left. 
-
+        Returns:
+            The exploration value
         """
-        # Start with the raw Q-value
-        value = utility
-        
         # Add exploration bonus for less-visited state-actions
         exploration_bonus = 1.0 / (counts + 1)
-        value += exploration_bonus
-        
-        # Add a huge bonus for moving away from nearby ghosts
-        if state.nearest_ghost_distance < 3:
-            # Calculate next position based on action
-            dx, dy = {'North': (0, 1), 'South': (0, -1), 'East': (1, 0), 'West': (-1, 0)}.get(action, (0, 0))
-            next_pos = (state.pacman_pos[0] + dx, state.pacman_pos[1] + dy)
-            
-            # Check if this action increases distance from ghost
-            ghost_distances = [manhattanDistance(next_pos, ghost_pos) for ghost_pos in state.ghost_positions]
-            if ghost_distances and min(ghost_distances) > state.nearest_ghost_distance:
-                value += 50  # Big bonus for moving away from ghosts
-        
-        if state.food_count <= 2:
-            # Calculate next position based on action
-            dx, dy = {'North': (0, 1), 'South': (0, -1), 'East': (1, 0), 'West': (-1, 0)}.get(action, (0, 0))
-            next_pos = (state.pacman_pos[0] + dx, state.pacman_pos[1] + dy)
-            
-            # Guide toward nearest food
-            if state.food_positions:
-                distances_to_food = [manhattanDistance(next_pos, food_pos) for food_pos in state.food_positions]
-                min_food_dist = min(distances_to_food)
-                # Reward for getting closer to food
-                if min_food_dist < state.nearest_food_distance:
-                    # Higher bonus when food is sparse
-                    food_bonus = 50 / (min_food_dist + 1)
-                    value += food_bonus
-                    
-        return value
+        return utility + exploration_bonus
 
     def getAction(self, state: GameState) -> Directions:
         """
         Choose the next action using an epsilon-greedy strategy.
-        
+
+        We factor the current game state into the calculation:
+        - Distance to ghost
+        - Distance to food
+        - Amount of food left
+            
+        Args:
+            state: the current state
+
+        Returns:
+            The action to take
         """
        
         legal = state.getLegalPacmanActions()
@@ -358,7 +447,7 @@ class QLearnAgent(Agent):
         # Learn from previous state-action pair if available
         if self.last_state and self.last_action and self.last_game_state:
             reward = self.computeReward(self.last_game_state, state)
-            self.learn(self.last_state, self.last_action, reward, state_features, legal)
+            self.learn(self.last_state, self.last_action, reward, state_features)
         
         # Epsilon-greedy action selection 
         if util.flipCoin(self.epsilon):
@@ -366,34 +455,98 @@ class QLearnAgent(Agent):
             action = random.choice(legal)
         else:
             # Exploitation with exploration function influence
-            q_vals = [(self.explorationFn(self.getQValue(state_features, action), 
-                                         self.getCount(state_features, action), 
-                                         state_features, action), action) 
-                      for action in legal]
-            _, action = max(q_vals) if q_vals else (0, random.choice(legal))
+            q_vals = []
+            for action in legal:
+                # Get base exploration value from explorationFn
+                q_value = self.getQValue(state_features, action)
+                count = self.getCount(state_features, action)
+                base_value = self.explorationFn(q_value, count)
+                
+                # Apply domain-specific bonuses
+                final_value = base_value
+                
+                # Add a huge bonus for moving away from nearby ghosts
+                if state_features.nearest_ghost_distance < 3:
+                    # Calculate next position based on action
+                    dx = 0
+                    dy = 0
+                    if action == 'North':
+                        dy = 1
+                    elif action == 'South':
+                        dy = -1
+                    elif action == 'East':
+                        dx = 1
+                    elif action == 'West':
+                        dx = -1
+                        
+                    next_pos = (state_features.pacman_pos[0] + dx, state_features.pacman_pos[1] + dy)
+                    
+                    # Check if this action increases distance from ghost
+                    ghost_distances = []
+                    for ghost_pos in state_features.ghost_positions:
+                        dist = manhattanDistance(next_pos, ghost_pos)
+                        ghost_distances.append(dist)
+                        
+                    if ghost_distances and min(ghost_distances) > state_features.nearest_ghost_distance:
+                        final_value += 50  # Big bonus for moving away from ghosts
+                
+                if state_features.food_count <= 2:
+                    # Calculate next position based on action
+                    dx = 0
+                    dy = 0
+                    if action == 'North':
+                        dy = 1
+                    elif action == 'South':
+                        dy = -1
+                    elif action == 'East':
+                        dx = 1
+                    elif action == 'West':
+                        dx = -1
+                        
+                    next_pos = (state_features.pacman_pos[0] + dx, state_features.pacman_pos[1] + dy)
+                    
+                    # Guide toward nearest food
+                    if state_features.food_positions:
+                        distances_to_food = []
+                        for food_pos in state_features.food_positions:
+                            dist = manhattanDistance(next_pos, food_pos)
+                            distances_to_food.append(dist)
+                            
+                        min_food_dist = min(distances_to_food) if distances_to_food else float('inf')
+                        # Reward for getting closer to food
+                        if min_food_dist < state_features.nearest_food_distance:
+                            # Higher bonus when food is sparse
+                            food_bonus = 50 / (min_food_dist + 1)
+                            final_value += food_bonus
+                
+                q_vals.append((final_value, action))
+                
+            if q_vals:
+                max_val = q_vals[0][0]
+                max_action = q_vals[0][1]
+                for val, act in q_vals:
+                    if val > max_val:
+                        max_val = val
+                        max_action = act
+                action = max_action
+            else:
+                action = random.choice(legal)
         
         # Save state for next update
         self.last_game_state = state
         self.last_state = state_features
         self.last_action = action
         self.updateCount(state_features, action)
-        
-        # Debug output for tricky situations 
-        # This helped us understand what the agent was thinking in critical moments
-        if state_features.food_count <= 2 and self.episodesSoFar >= self.numTraining:
-            print(f"Food count: {state_features.food_count}, Pacman at {state_features.pacman_pos}")
-            print(f"Ghost dist: {state_features.nearest_ghost_distance}, Food positions: {state_features.food_positions}")
-            for a in legal:
-                q_val = self.getQValue(state_features, a)
-                exp_val = self.explorationFn(q_val, self.getCount(state_features, a), state_features, a)
-                print(f"Action {a}: Q={q_val:.2f}, Adjusted={exp_val:.2f}")
-            print(f"Selected: {action}")
-        
+                       
         return action
 
     def final(self, state: GameState):
         """
-        Handle the end of an episode - called after a win or loss.
+        Handle the end of episodes.
+        This is called by the game after a win or a loss.
+
+        Args:
+            state: the final game state
         """
         # Track performance stats
         self.games_played += 1
@@ -409,8 +562,7 @@ class QLearnAgent(Agent):
         if self.last_state and self.last_action and self.last_game_state:
             reward = self.computeReward(self.last_game_state, state)
             next_state = GameStateFeatures(state)
-            next_legal_actions = []  # No legal actions in terminal state
-            self.learn(self.last_state, self.last_action, reward, next_state, next_legal_actions)
+            self.learn(self.last_state, self.last_action, reward, next_state)
         
         # Reset for next episode
         self.incrementEpisodesSoFar()
